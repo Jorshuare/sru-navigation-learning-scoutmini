@@ -1,0 +1,210 @@
+<?xml version="1.0"?>
+<!--
+Scout Mini URDF, written for this project from confirmed real-hardware values only.
+
+This is NOT copied/adapted from scout_ros2's scout_v2.xacro - that file is Scout 2.0
+(0.925x0.38x0.21m body, 0.583m track, 0.4536m wheel radius, 40kg) which is a
+different, larger robot; reusing its numbers for Scout Mini was the exact mistake
+this project exists to avoid repeating. This file uses only measurements confirmed
+for this project's actual Scout Mini unit - see PLAN.md sec 6 for sourcing of every
+number below. Written as a flat URDF (no xacro macros) since the target pipeline is
+a one-off IsaacLab UrdfConverter conversion to USD, not a live ROS description, and
+xacro is not part of the IsaacLab Python environment.
+
+Geometry is primitive (box + cylinders), no meshes - visual/collision fidelity is
+secondary to correct kinematic dimensions for this RL training use case.
+
+Confirmed values (PLAN.md sec 6):
+  - Body L x W x H:      612 x 580 x 245 mm  (AgileX official CAD drawing)
+  - Track width (L-R):   490 mm               (same drawing, front-view)
+  - Wheelbase (F-R):     615 mm               (same drawing, top-view)
+  - Ground clearance:    115 mm               (AgileX manual / Trossen docs)
+  - Weight:               23-26 kg            (AgileX manual / Trossen docs)
+  - Wheel diameter:       160 mm (radius 80mm) - direct measurement, no spec sheet
+    published this number (see PLAN.md sec 9 for what was checked)
+  - Wheel width:           80 mm              - direct measurement
+
+Values NOT from a real measurement, explicitly approximated (commented at each
+usage site below): chassis box width (580mm is the outer wheel-to-wheel footprint,
+not the narrower chassis body itself, which isn't independently specified anywhere
+found), body/wheel mass split and inertia tensors (no CAD mass properties available;
+inertia computed analytically from a solid-box/solid-cylinder approximation of the
+confirmed outer dimensions, using placeholder masses within the confirmed 23-26kg
+total range - not measured).
+-->
+<robot name="scout_mini">
+
+  <!-- ================= Base / chassis ================= -->
+  <!-- Chassis box height: overall height (245mm) minus ground clearance (115mm)
+       = 130mm. Chassis box width: NOT independently measured - 580mm is the outer
+       wheel-to-wheel footprint (confirmed: matches track 490mm + wheel width 80mm
+       = 570mm, close enough to 580mm to cross-check the wheel-width measurement).
+       Set to 400mm here as a simplified, clearly-approximate collision/visual
+       proxy that stays safely inboard of the wheels on both sides - not a measured
+       chassis width. Length (612mm) is the confirmed L dimension. -->
+  <link name="base_link">
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <box size="0.612 0.400 0.130" />
+      </geometry>
+      <material name="scout_mini_body_gray">
+        <color rgba="0.35 0.35 0.35 1.0" />
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <box size="0.612 0.400 0.130" />
+      </geometry>
+    </collision>
+    <!-- Inertia: solid-box approximation about the visual box above.
+         Mass 18.5kg = 24.5kg total (midpoint of confirmed 23-26kg range) minus
+         4 x 1.5kg placeholder wheel mass below - not an independent measurement. -->
+    <inertial>
+      <mass value="18.5" />
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <inertia ixx="0.27272" ixy="0" ixz="0" iyy="0.60348" iyz="0" izz="0.82409" />
+    </inertial>
+  </link>
+
+  <!-- base_footprint: ground-projected reference frame, at the bottom of the
+       wheels (matches the convention used in scout_ros2's scout_v2.xacro).
+       z = wheel_vertical_offset - wheel_radius = -0.100 - 0.080 = -0.180,
+       where wheel_vertical_offset (-0.100) is derived below. -->
+  <link name="base_footprint" />
+
+  <joint name="base_footprint_joint" type="fixed">
+    <origin xyz="0 0 -0.180" rpy="0 0 0" />
+    <parent link="base_link" />
+    <child link="base_footprint" />
+  </joint>
+
+  <!-- ================= Wheels ================= -->
+  <!-- wheel_radius = 0.080m, wheel_length (width) = 0.080m: both direct
+       measurements of the real hardware (see header).
+       wheel_vertical_offset = wheel_radius - (ground_clearance + chassis_height/2)
+                              = 0.080 - (0.115 + 0.065) = -0.100
+       i.e. base_link origin is placed at the chassis box's vertical center, and
+       the wheel center sits 0.100m below it so the wheel bottom (0.080m further
+       down) touches the ground plane defined by ground_clearance.
+       track/2 = 0.245, wheelbase/2 = 0.3075 - both confirmed values (PLAN.md sec 6).
+       Wheel mass (1.5kg each) is an unmeasured placeholder - see header. -->
+
+  <link name="front_left_wheel_link">
+    <visual>
+      <origin xyz="0 0 0" rpy="1.5707963 0 0" />
+      <geometry>
+        <cylinder radius="0.080" length="0.080" />
+      </geometry>
+      <material name="scout_mini_wheel_black">
+        <color rgba="0.1 0.1 0.1 1.0" />
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="1.5707963 0 0" />
+      <geometry>
+        <cylinder radius="0.080" length="0.080" />
+      </geometry>
+    </collision>
+    <inertial>
+      <mass value="1.5" />
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <inertia ixx="0.0032" ixy="0" ixz="0" iyy="0.0048" iyz="0" izz="0.0032" />
+    </inertial>
+  </link>
+  <joint name="front_left_wheel_joint" type="continuous">
+    <parent link="base_link" />
+    <child link="front_left_wheel_link" />
+    <origin xyz="0.3075 0.245 -0.100" rpy="0 0 0" />
+    <axis xyz="0 1 0" />
+  </joint>
+
+  <link name="front_right_wheel_link">
+    <visual>
+      <origin xyz="0 0 0" rpy="1.5707963 0 0" />
+      <geometry>
+        <cylinder radius="0.080" length="0.080" />
+      </geometry>
+      <material name="scout_mini_wheel_black">
+        <color rgba="0.1 0.1 0.1 1.0" />
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="1.5707963 0 0" />
+      <geometry>
+        <cylinder radius="0.080" length="0.080" />
+      </geometry>
+    </collision>
+    <inertial>
+      <mass value="1.5" />
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <inertia ixx="0.0032" ixy="0" ixz="0" iyy="0.0048" iyz="0" izz="0.0032" />
+    </inertial>
+  </link>
+  <joint name="front_right_wheel_joint" type="continuous">
+    <parent link="base_link" />
+    <child link="front_right_wheel_link" />
+    <origin xyz="0.3075 -0.245 -0.100" rpy="0 0 0" />
+    <axis xyz="0 1 0" />
+  </joint>
+
+  <link name="rear_left_wheel_link">
+    <visual>
+      <origin xyz="0 0 0" rpy="1.5707963 0 0" />
+      <geometry>
+        <cylinder radius="0.080" length="0.080" />
+      </geometry>
+      <material name="scout_mini_wheel_black">
+        <color rgba="0.1 0.1 0.1 1.0" />
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="1.5707963 0 0" />
+      <geometry>
+        <cylinder radius="0.080" length="0.080" />
+      </geometry>
+    </collision>
+    <inertial>
+      <mass value="1.5" />
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <inertia ixx="0.0032" ixy="0" ixz="0" iyy="0.0048" iyz="0" izz="0.0032" />
+    </inertial>
+  </link>
+  <joint name="rear_left_wheel_joint" type="continuous">
+    <parent link="base_link" />
+    <child link="rear_left_wheel_link" />
+    <origin xyz="-0.3075 0.245 -0.100" rpy="0 0 0" />
+    <axis xyz="0 1 0" />
+  </joint>
+
+  <link name="rear_right_wheel_link">
+    <visual>
+      <origin xyz="0 0 0" rpy="1.5707963 0 0" />
+      <geometry>
+        <cylinder radius="0.080" length="0.080" />
+      </geometry>
+      <material name="scout_mini_wheel_black">
+        <color rgba="0.1 0.1 0.1 1.0" />
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="1.5707963 0 0" />
+      <geometry>
+        <cylinder radius="0.080" length="0.080" />
+      </geometry>
+    </collision>
+    <inertial>
+      <mass value="1.5" />
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <inertia ixx="0.0032" ixy="0" ixz="0" iyy="0.0048" iyz="0" izz="0.0032" />
+    </inertial>
+  </link>
+  <joint name="rear_right_wheel_joint" type="continuous">
+    <parent link="base_link" />
+    <child link="rear_right_wheel_link" />
+    <origin xyz="-0.3075 -0.245 -0.100" rpy="0 0 0" />
+    <axis xyz="0 1 0" />
+  </joint>
+
+</robot>
