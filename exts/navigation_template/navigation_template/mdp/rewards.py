@@ -17,7 +17,7 @@ import torch
 from isaaclab.assets import Articulation
 from isaaclab.managers import SceneEntityCfg
 
-from isaaclab_nav_task.navigation.mdp.navigation.goal_commands import RobotNavigationGoalCommand
+from navigation_template.mdp.navigation.goal_commands import RobotNavigationGoalCommand
 
 if TYPE_CHECKING:
     from isaaclab.envs import ManagerBasedRLEnv

@@ -86,28 +86,37 @@ ZEDX_CAMERA_CONFIG = CameraConfig(
 #     datasheet lists under "binning 2x2 mode" - frame rate not yet confirmed
 #     (15/30/60fps all listed as available at 720p)
 #
-# NOT filled in with confidence - focal_length:
+# focal_length - now derived from real datasheet values, not a placeholder:
 #   Confirmed (via depth_noise_encoder.py's own docstring) that this field is in
-#   PIXELS, not mm, and it's used directly in `disparity = focal_length * baseline
-#   / depth` inside the depth-noise disparity model. ZED-X's value here (25.0) does
-#   NOT match the pixel-focal-length used elsewhere in this same repo for the
-#   raycasting camera intrinsics (fx=72.7025 at a 192x120 pre-downsample
-#   resolution, per navigation_env_cfg.py) - meaning 25.0 is calibrated against
-#   some OTHER, unconfirmed internal resolution specific to the noise model, not
-#   directly transferable by unit conversion alone. Guessing a value here risks
-#   silently miscalibrating the noise model in a way that would not throw an error
-#   - it would just quietly train the encoder on the wrong disparity scale.
-#   TODO before this config is used for real training: either (a) trace exactly
-#   which resolution depth_noise_encoder.py's disparity computation assumes and
-#   derive the correct pixel-focal-length for ZED 2 at 720p from its real
-#   2.12mm physical focal length + 2um pixel pitch (720p uses 2x2 binning per the
-#   datasheet, i.e. effective 4um pitch), or (b) sample a real ZED 2's
-#   /zed_node/rgb/camera_info topic at 720p and read fx directly - the more
-#   reliable option since it sidesteps needing to know the internal resolution at
-#   all. Placeholder value below is ZED-X's number, clearly not correct for ZED 2 -
-#   present only so the dataclass has a valid float, not as a considered estimate.
+#   PIXELS, used directly in `disparity = focal_length * baseline / depth`.
+#   Derived by pulling and parsing Stereolabs' official ZED 2 datasheet PDF
+#   directly (cdn.stereolabs.com/assets/datasheets/zed2-camera-datasheet.pdf,
+#   mirrored via generationrobots.com since the primary host wasn't reachable from
+#   here): confirmed sensor pixel size 2um x 2um, array 2688x1520, focal length
+#   2.12mm, and critically - 720p output is explicitly labeled "binning 2x2 mode"
+#   in the datasheet's own resolution table, confirming the earlier assumption
+#   that 720p uses 4um effective pixel pitch, not the native 2um.
+#     fx (pixels) = focal_length_mm / effective_pixel_pitch_mm
+#                 = 2.12 / (0.002 * 2) = 530.0 pixels, at 1280px-wide 720p output.
+#   Cross-checked against this repo's own convention for the OTHER camera config
+#   field (the raycast_camera pinhole intrinsics, fx=72.7025 at 192px width for
+#   ZED-X): scaling that down to this dataclass's 64px resolution the same way
+#   (72.7025 * 64/192 = 24.2) lands close to ZEDX_CAMERA_CONFIG.focal_length=25.0
+#   above - consistent with "this field = fx scaled to the 64px-wide final
+#   resolution" being the repo's actual convention, though the exact resolution
+#   depth_noise_encoder.py's disparity formula assumes was never confirmed by
+#   reading an explicit constant, only inferred from this consistency. Applying
+#   the same scaling to the real ZED 2 number: 530.0 * 64/1280 = 26.5.
+#   This is a real, datasheet-derived value, not a guess - but it's still a
+#   nominal/generic-ZED2 number, not this specific physical unit's factory
+#   stereo calibration (which varies slightly per unit and can only be read from
+#   that unit's own /zed_node/rgb/camera_info topic). Fine for Stage 2's smoke
+#   test; worth sampling the real topic before Stage 3+ training if precision
+#   matters more at that point.
+_ZED2_FOCAL_LENGTH_PX = 2.12 / (0.002 * 2) * 64 / 1280  # = 26.5
+
 ZED2_CAMERA_CONFIG = CameraConfig(
-    focal_length=25.0,  # TODO: NOT verified for ZED 2 - see note above
+    focal_length=_ZED2_FOCAL_LENGTH_PX,
     baseline=0.12,
     min_depth=0.3,
     max_depth=20.0,
