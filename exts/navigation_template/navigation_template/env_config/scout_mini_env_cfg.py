@@ -97,6 +97,27 @@ class ScoutMiniNavigationEnvCfg(NavigationEnvCfg):
         # not dead weight left in for "compatibility", removed outright.
         self.rewards.lateral_movement = None
 
+        # --- Observations ---
+        # low_level_policy is B2W/AoW-D-specific scaffolding: its `actions` term
+        # (mdp.last_low_level_action) reads `action_term.low_level_actions`, which
+        # only `PerceptiveNavigationSE2Action` has (it's the hierarchical low-level-
+        # policy interface). DifferentialDriveAction has no such concept - there's
+        # no low-level policy, `velocity_command` IS the final joint-velocity
+        # command. Confirmed via a real smoke-test crash (AttributeError), not
+        # something caught by inspection alone - see STAGE_2_REPORT.md.
+        self.observations.low_level_policy = None
+
+        # --- Events ---
+        # randomize_action_scale directly writes `action_term_obj._policy_scaling`/
+        # `._policy_bias` with no hasattr guard (unlike the low-pass-filter and
+        # backward-penalty event functions, which do guard and are left enabled -
+        # they're safe no-ops on DifferentialDriveAction). Those two attributes are
+        # PerceptiveNavigationSE2Action-specific (policy-output rescaling for its
+        # hierarchical low-level policy interface) - would crash the same way
+        # low_level_policy did above. Disabled for the same reason: doesn't apply
+        # to a direct-drive action term.
+        self.events.randomize_action_scale = None
+
         # --- Terminations ---
         # No legs - only base_link contact is a fall/collision signal.
         self.terminations.base_contact.params = {
