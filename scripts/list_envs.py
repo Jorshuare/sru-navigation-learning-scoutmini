@@ -7,7 +7,7 @@ It prints the name of the environment, the entry point and the config file.
 
 """Launch Isaac Sim Simulator first."""
 
-from omni.isaac.lab.app import AppLauncher
+from isaaclab.app import AppLauncher
 
 # launch omniverse app
 app_launcher = AppLauncher(headless=True)
@@ -20,7 +20,7 @@ import gymnasium as gym
 from prettytable import PrettyTable
 
 # Import extensions to set up environment tasks
-import ext_template.tasks  # noqa: F401
+import navigation_template  # noqa: F401
 
 
 def main():

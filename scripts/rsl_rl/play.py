@@ -4,7 +4,7 @@
 
 import argparse
 
-from omni.isaac.lab.app import AppLauncher
+from isaaclab.app import AppLauncher
 
 # local imports
 import cli_args  # isort: skip
@@ -42,18 +42,15 @@ from rsl_rl.runners import OnPolicyRunner
 # Import extensions to set up environment tasks
 import navigation_template  # noqa: F401
 
-from omni.isaac.lab.envs import DirectMARLEnv, multi_agent_to_single_agent
-from omni.isaac.lab.utils.dict import print_dict
-from omni.isaac.lab_tasks.utils import get_checkpoint_path, parse_env_cfg
-from omni.isaac.lab_tasks.utils.wrappers.rsl_rl import (
+from isaaclab.envs import DirectMARLEnv, multi_agent_to_single_agent
+from isaaclab.utils.dict import print_dict
+from isaaclab_tasks.utils import get_checkpoint_path, parse_env_cfg
+from isaaclab_rl.rsl_rl import (
     RslRlOnPolicyRunnerCfg,
     RslRlVecEnvWrapper,
     export_policy_as_jit,
     export_policy_as_onnx,
 )
-
-# Import extensions to set up environment tasks
-import ext_template.tasks  # noqa: F401
 
 
 def main():
@@ -101,13 +98,27 @@ def main():
     policy = ppo_runner.get_inference_policy(device=env.unwrapped.device)
 
     # export policy to onnx/jit
+    # NOTE: isaaclab_rl's exporter only recognizes standard nn.LSTM/nn.GRU modules
+    # (introspected via the module's class name) - it doesn't know about the SRU
+    # fork's custom `LSTM_SRU` recurrent module, and raises NotImplementedError for
+    # it. That's a real gap in generic deployment export (relevant to Stage 5,
+    # sim-to-real prep), not something that should block just watching/evaluating
+    # the policy here - confirmed via a real crash during Stage 3 play verification,
+    # not assumed. Caught and logged rather than silently skipped, so it's still
+    # visible if/when export support actually needs fixing.
     export_model_dir = os.path.join(os.path.dirname(resume_path), "exported")
-    export_policy_as_jit(
-        ppo_runner.alg.actor_critic, ppo_runner.obs_normalizer, path=export_model_dir, filename="policy.pt"
-    )
-    export_policy_as_onnx(
-        ppo_runner.alg.actor_critic, normalizer=ppo_runner.obs_normalizer, path=export_model_dir, filename="policy.onnx"
-    )
+    try:
+        export_policy_as_jit(
+            ppo_runner.alg.actor_critic, ppo_runner.obs_normalizer, path=export_model_dir, filename="policy.pt"
+        )
+        export_policy_as_onnx(
+            ppo_runner.alg.actor_critic, normalizer=ppo_runner.obs_normalizer, path=export_model_dir, filename="policy.onnx"
+        )
+    except NotImplementedError as e:
+        print(
+            f"[WARNING] Skipping JIT/ONNX export - not supported for this policy's RNN type ({e}). "
+            "Not needed to play/evaluate the policy; only relevant for deployment export (Stage 5)."
+        )
 
     # reset environment
     obs, _ = env.get_observations()

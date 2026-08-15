@@ -8,6 +8,7 @@
 # substantially since Scout Mini has no legs, no low-level locomotion policy, and a
 # genuinely 2-DOF action space. See PLAN.md sec 7 for the decisions this follows.
 
+import isaaclab.sim as sim_utils
 from isaaclab.managers import SceneEntityCfg
 from isaaclab.sensors import patterns
 from isaaclab.utils import configclass
@@ -40,31 +41,51 @@ class ScoutMiniNavigationEnvCfg(NavigationEnvCfg):
         # --- Robot ---
         self.scene.robot = SCOUT_MINI_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
 
+        # --- Ground visual material ---
+        # Swapped from the base config's remote MDL marble-tile texture to a plain
+        # flat-color material. That texture (TilesMarbleSpiderWhiteBrickBondHoned,
+        # fetched live from an NVIDIA Omniverse asset server) has one component -
+        # a single-channel/grayscale-encoded JPEG - that reliably fails to load in
+        # this server's installed Isaac Sim build: confirmed the file itself is not
+        # corrupted (downloaded and inspected it independently, valid JPEG), and
+        # confirmed it's not a transient network issue (failed identically on a
+        # second full run) - so this looks like a genuine renderer-side encoding
+        # incompatibility, not something fixable by retrying or clearing a cache.
+        # Purely cosmetic either way: the ground's visual material has no effect on
+        # the raycasting depth sensor (computed geometrically against the physics
+        # mesh, not the rendered image) or on physics - only on what a human sees
+        # when watching a render. A flat color sidesteps needing to fetch/decode
+        # this asset at all.
+        self.scene.terrain.visual_material = sim_utils.PreviewSurfaceCfg(
+            diffuse_color=(0.6, 0.6, 0.6), roughness=0.8, metallic=0.0
+        )
+
         # --- Depth camera ---
         # Real ZED 2 intrinsics derived from Stereolabs' official datasheet (2.12mm
-        # focal length, 2um pixel pitch, 720p = 2x2 binning -> 530px fx at 1280w),
-        # scaled to a 192x120 raycast resolution matching the upstream convention
-        # (raycast native res -> downsample_factor=3 -> 64x40 to match the VAE
-        # encoder's fixed input size). See camera_config.py's ZED2_CAMERA_CONFIG
-        # comment for the full derivation and its one remaining caveat (nominal
-        # ZED 2 optics, not this specific unit's factory stereo calibration).
-        # Real ZED 2 intrinsics derived from Stereolabs' official datasheet (2.12mm
-        # focal length, 2um pixel pitch, 720p = 2x2 binning -> 530px fx at 1280w-
+        # focal length, 2um pixel pitch, 720p = 2x2 binning -> 530px fx at 1280px-
         # wide 720p). Raycasting directly at the final 64x40 resolution (matching
         # the VAE encoder's fixed input size, and matching how env_cfg_base.py's
         # own default was fixed - see that file's comment on why
         # `from_ros_camera_info` isn't used: it doesn't exist in this server's
         # installed IsaacLab v2.1.1). fx scaled from the real 1280px-wide value
-        # down to 64px the same way (528... /1280*64): 530.0 * 64/1280 = 26.5.
+        # down to 64px the same way: 530.0 * 64/1280 = 26.5.
         zed2_fx_64 = 2.12 / (0.002 * 2) * 64 / 1280  # = 26.5
         self.scene.raycast_camera.prim_path = "{ENV_REGEX_NS}/Robot/base_link"
-        # Mounted at the front of the chassis, roughly centered, near the top -
-        # not a measured mount position (no camera mount drawing available), a
-        # reasonable placement pending a real measurement. 0 degree tilt (level),
-        # unlike B2W's 20-degree-down tilt, since Scout Mini's camera should be
-        # roughly level for a ground vehicle rather than angled for a legged
-        # robot's typical forward-and-down gait view.
-        self.scene.raycast_camera.offset.pos = (0.30, 0.0, 0.10)
+        # Real mount measurements (2026-08-15): camera's lower base sits 19.2cm
+        # above the top of the chassis, 6cm forward, facing directly forward with
+        # no tilt (confirmed explicitly - "not tilt at any degree").
+        #   x: 0.06m forward of base_link (chassis vertical-center) origin - this
+        #      is 6cm forward of chassis CENTER, matching how the measurement was
+        #      asked for; if it was actually meant as 6cm forward of the chassis's
+        #      FRONT EDGE (306mm forward of center) instead, this needs correcting
+        #      to x=0.246 - flagged here rather than silently guessed either way.
+        #   z: chassis top is 0.065m above base_link (half the 0.130m chassis
+        #      height, see scout_mini.urdf's header) + 0.192m mount height above
+        #      that = 0.257m above base_link.
+        #   y: 0.0 - not specified, assumed centered left-right.
+        #   rot: identity - level, forward-facing, no tilt (confirmed, unlike
+        #      B2W's 20-degree-down tilt for its legged forward-and-down gait view).
+        self.scene.raycast_camera.offset.pos = (0.06, 0.0, 0.257)
         self.scene.raycast_camera.offset.rot = (1.0, 0.0, 0.0, 0.0)
         # cx/cy left at image center (32, 20) since no factory-calibrated
         # principal-point offset is available for this specific unit (see
