@@ -7,8 +7,18 @@ DEPLOYMENT_ADAPTATION.md for the full list of changes and why each was made.
 
 # Control parameters
 DEFAULT_CONTROL_FREQUENCY = 5.0  # Hz
-DEFAULT_MIN_DEPTH = 0.25  # meters
-DEFAULT_MAX_DEPTH = 10.0  # meters
+# Was 0.25/10.0 (B2W/ZED-X's range, inherited unchanged and never migrated).
+# Scout Mini was actually trained against ZED2_CAMERA_CONFIG
+# (sru_retrain/exts/.../mdp/depth_utils/camera_config.py): min_depth=0.3,
+# max_depth=20.0. Confirmed via direct read of that file, not assumed. This
+# matters because depth_callback() zeroes anything outside [min,max] - and the
+# trained VAE encoder reads 0.0 as "obstacle right here", not "far/unknown"
+# (same convention as training's DepthNoise.forward). Real Gazebo frames run
+# ~44% Inf-pixel (measured via check_depth_values.py) - at the old 0.25/10.0
+# range, all of that plus anything genuinely 10-20m out got zeroed to "close
+# obstacle", which the policy was never trained to see that way.
+DEFAULT_MIN_DEPTH = 0.3  # meters
+DEFAULT_MAX_DEPTH = 20.0  # meters
 ARRIVE_GOAL_THRESHOLD = 0.75  # meters
 NEAR_GOAL_THRESHOLD_MULTIPLIER = 2.0
 JOYSTICK_TIMEOUT = 15.0  # seconds

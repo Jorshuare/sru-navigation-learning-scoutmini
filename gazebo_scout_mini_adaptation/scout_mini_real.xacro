@@ -1,0 +1,125 @@
+<?xml version="1.0"?>
+<!--
+Scout Mini Gazebo description, corrected to real hardware dimensions.
+
+Structure and wheel macros are copied from scout_ros2's scout_v2.xacro (Part A
+debugged this exact structure - wheel joint types, gazebo integration, etc. - no
+reason to redo that work). What's different here: EVERY dimension below is Scout
+Mini's real, confirmed value (see sru_retrain/PLAN.md sec 6), not Scout 2.0's.
+scout_v2.xacro's own numbers (0.925m body, 0.58306m track, 0.16459m wheel radius,
+40kg) are Scout 2.0's - a different, larger robot - inherited into the original
+Gazebo port and never corrected, which is exactly the gap this file fixes.
+
+Confirmed real values used below (all from PLAN.md sec 6, direct measurement or
+official AgileX mechanical drawing):
+  - Body L x W x H:      612 x 580 x 245 mm  (W here is an approximation - see note)
+  - Track width (L-R):   490 mm
+  - Wheelbase (F-R):     615 mm
+  - Ground clearance:    115 mm
+  - Wheel diameter:      160 mm (radius 80mm)
+  - Wheel width:          80 mm
+  - Weight:              23-26 kg (confirmed range; using 24.5kg midpoint)
+
+base_y_size (400mm) is NOT a measured chassis width - same caveat as
+scout_mini.urdf (the IsaacLab training asset, sru_retrain/exts/.../assets/data/
+Robots/ScoutMini/urdf/scout_mini.urdf): 580mm is the outer wheel-to-wheel
+footprint, not the narrower chassis body itself, which isn't independently
+specified anywhere found. Kept at 400mm to match that same asset for consistency
+between what was trained on and what's simulated here - purely visual/collision,
+doesn't affect kinematics.
+
+wheel_vertical_offset derivation (same as scout_mini.urdf's header): base_link
+origin is placed at the chassis box's vertical center. ground_clearance (0.115) +
+chassis_height/2 (0.065) = 0.180m above ground. wheel center sits at wheel_radius
+(0.08m) above ground, so wheel_vertical_offset = 0.08 - 0.180 = -0.100m relative to
+base_link.
+-->
+
+<robot name="scout_mini_real"
+    xmlns:xacro="http://ros.org/wiki/xacro">
+
+    <xacro:arg name="robot_namespace" default="/" />
+
+    <xacro:include filename="$(find scout_description)/urdf/scout_wheel_type1.xacro" />
+    <xacro:include filename="$(find scout_description)/urdf/scout_wheel_type2.xacro" />
+    <!-- NOTE: points at gazebo_real.xacro (this project's corrected file), NOT the
+         original gazebo.xacro (Scout 2.0/B2W-camera values) - when this gets copied
+         into the real scout_description package, gazebo_real.xacro must travel
+         with it under this same name, or this include needs updating to match. -->
+    <xacro:include filename="$(find scout_description)/urdf/gazebo_real.xacro" />
+
+    <!-- Variables -->
+    <xacro:property name="M_PI" value="3.14159"/>
+
+    <!-- Vehicle Geometries - real Scout Mini values, see header -->
+    <xacro:property name="base_x_size" value="0.612" />
+    <xacro:property name="base_y_size" value="0.400" />  <!-- approximate, see header -->
+    <xacro:property name="base_z_size" value="0.130" />
+
+    <xacro:property name="wheelbase" value="0.615" />
+    <xacro:property name="track" value="0.49" />
+    <xacro:property name="wheel_vertical_offset" value="-0.100" />
+
+    <xacro:property name="wheel_length" value="0.08" />
+    <xacro:property name="wheel_radius" value="0.08" />
+
+    <!-- Base link -->
+    <link name="base_link">
+        <visual>
+            <origin xyz="0 0 0" rpy="0 0 0" />
+            <geometry>
+                <box size="${base_x_size} ${base_y_size} ${base_z_size}"/>
+            </geometry>
+            <material name="scout_body_gray">
+                <color rgba="0.35 0.35 0.35 1.0"/>
+            </material>
+        </visual>
+        <collision>
+            <origin xyz="0 0 0" rpy="0 0 0" />
+            <geometry>
+                <box size="${base_x_size} ${base_y_size} ${base_z_size}"/>
+            </geometry>
+        </collision>
+    </link>
+
+    <link name="base_footprint"/>
+
+    <joint name="base_footprint_joint" type="fixed">
+        <origin xyz="0 0 ${wheel_vertical_offset - wheel_radius}" rpy="0 0 0" />
+        <parent link="base_link" />
+        <child link="base_footprint" />
+    </joint>
+
+    <!-- Inertia: solid-box approximation, mass = 24.5kg midpoint of confirmed
+         23-26kg range minus 4x1.5kg placeholder wheel mass (matches
+         scout_mini.urdf's own reasoning) = 18.5kg body -->
+    <link name="inertial_link">
+        <inertial>
+            <mass value="18.5" />
+            <origin xyz="0.0 0.0 0.0" />
+            <inertia ixx="0.27272" ixy="0" ixz="0" iyy="0.60348" iyz="0" izz="0.82409" />
+        </inertial>
+    </link>
+
+    <joint name="inertial_joint" type="fixed">
+        <origin xyz="0 0 0" rpy="0 0 0" />
+        <parent link="base_link" />
+        <child link="inertial_link" />
+    </joint>
+
+    <!-- Scout wheel macros -->
+    <!-- wheel labeled from 0 to 3, counter-clockwise, starting from front right wheel -->
+    <xacro:scout_wheel_type1 wheel_prefix="front_right">
+        <origin xyz="${wheelbase/2} ${-track/2} ${wheel_vertical_offset}" rpy="0 0 0" />
+    </xacro:scout_wheel_type1>
+    <xacro:scout_wheel_type2 wheel_prefix="front_left">
+        <origin xyz="${wheelbase/2} ${track/2} ${wheel_vertical_offset}" rpy="0 0 0" />
+    </xacro:scout_wheel_type2>
+    <xacro:scout_wheel_type1 wheel_prefix="rear_left">
+        <origin xyz="${-wheelbase/2} ${track/2} ${wheel_vertical_offset}" rpy="0 0 0" />
+    </xacro:scout_wheel_type1>
+    <xacro:scout_wheel_type2 wheel_prefix="rear_right">
+        <origin xyz="${-wheelbase/2} ${-track/2} ${wheel_vertical_offset}" rpy="0 0 0" />
+    </xacro:scout_wheel_type2>
+
+</robot>

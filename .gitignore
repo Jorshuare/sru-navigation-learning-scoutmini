@@ -41,6 +41,16 @@ _build
 # Remove this section if you'd rather have these tracked/pushed after all.
 PLAN.md
 STAGE_*_REPORT.md
+HANDOFF.md
+GAZEBO_ADAPTATION.md
+DEPLOYMENT_ADAPTATION.md
+
+# CLAUDE.md - references this specific server's absolute paths (apptainer
+# sandbox location, tmux session name, GPU layout) and internal debugging
+# history not meant for a public repo. Regenerate locally if needed - it's
+# not the project's actual source, just local Claude Code context.
+CLAUDE.md
+CLAUDE.local.md
 
 # Reference material (manufacturer CAD screenshots etc.) - may be
 # copyrighted/proprietary, not this project's own content to redistribute.

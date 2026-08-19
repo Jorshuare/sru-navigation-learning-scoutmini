@@ -286,7 +286,19 @@ def height_scan_feat(
     # Initialize the encoder on first call
     if HEIGHTSCAN_FEAT_ENCODER is None:
         print("Initializing height scan feature encoder...")
-        HEIGHTSCAN_FEAT_ENCODER = HeightScanFeatEncoder(feature_dim=64).to(torch.device("cuda"))
+        # Was `.to(torch.device("cuda"))` (no index) - same device-mismatch
+        # bug found and fixed in the depth encoder (see comments in
+        # depth_image_noisy()/depth_image_noisy_delayed() above): resolves
+        # to PyTorch's current default CUDA device, not necessarily
+        # env.device. Fixed at the SOURCE here rather than with a post-hoc
+        # self-healing `.to()` after the fact, unlike the depth encoder fix -
+        # this module gets torch.jit.optimize_for_inference()'d immediately
+        # below, which FREEZES it; moving a frozen/optimized ScriptModule to
+        # a different device afterward isn't reliably supported (freezing
+        # can bake in device-specific fusions), so it must be on the right
+        # device before scripting/freezing happens, not after. `env` is
+        # already in scope here.
+        HEIGHTSCAN_FEAT_ENCODER = HeightScanFeatEncoder(feature_dim=64).to(env.device)
         HEIGHTSCAN_FEAT_ENCODER.eval()
         JIT_HEIGHTSCAN_FEAT_ENCODER = torch.jit.script(HEIGHTSCAN_FEAT_ENCODER)
         JIT_HEIGHTSCAN_FEAT_ENCODER = torch.jit.optimize_for_inference(JIT_HEIGHTSCAN_FEAT_ENCODER)
@@ -401,6 +413,23 @@ def depth_image_prefect(env, sensor_cfg):
         "Depth encoder JIT model is not initialized. Call initialize_depth_noise_generator first."
     )
     model = cast(torch.jit.ScriptModule, JIT_DEPTH_NOISE_GENERATOR)
+    # Bug found 2026-08-19: initialize_depth_noise_generator() moves this model
+    # with `.to(torch.device("cuda"))` (no index), which resolves to whatever
+    # PyTorch's CURRENT default CUDA device happens to be at init time - not
+    # necessarily env.device. Confirmed via a real crash: running play.py
+    # non-headless with --device cuda:1 loaded this model onto cuda:0 while
+    # depth_tensor (from the camera sensor, correctly on env.device=cuda:1)
+    # stayed on cuda:1 - "Expected all tensors to be on the same device...
+    # cuda:1 and cuda:0" inside DepthNoise.filter_disparity's conv2d. Same
+    # command run headless didn't hit this (env.device happened to already be
+    # PyTorch's current device at that point in that startup path) - a real,
+    # order-dependent bug, not something specific to the GUI/non-headless
+    # path itself. Self-healing fix: match the model to depth_tensor's actual
+    # device (the authoritative source - it comes straight from the sensor,
+    # always on env.device) right before use. `.to()` is a no-op when already
+    # on the right device, so this is negligible overhead in the common case.
+    if next(model.parameters()).device != depth_tensor.device:
+        model.to(depth_tensor.device)
     if use_jit:
         depth_tensor[depth_tensor > max_depth] = 0.0
         encoded_depth_tensor = model(depth_tensor)
@@ -446,6 +475,13 @@ def depth_image_noisy_delayed(
         "Depth encoder JIT model is not initialized. Call initialize_depth_noise_generator first."
     )
     model = cast(torch.jit.ScriptModule, JIT_DEPTH_NOISE_GENERATOR)
+    # See the matching comment in depth_image_noisy() above - same
+    # device-mismatch bug (initialize_depth_noise_generator's hardcoded
+    # `.to(torch.device("cuda"))` vs env.device), same self-healing fix.
+    # This is the call site that actually appeared in the real crash
+    # traceback (RuntimeError inside DepthNoise.filter_disparity's conv2d).
+    if next(model.parameters()).device != depth_tensor.device:
+        model.to(depth_tensor.device)
     if use_jit:
         depth_tensor[depth_tensor > max_depth] = 0.0  # depth larger than depth max is invalid
         depth_tensor[depth_tensor < min_depth] = 0.0  # depth smaller than depth min is invalid

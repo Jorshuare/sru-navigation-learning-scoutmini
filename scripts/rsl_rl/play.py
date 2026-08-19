@@ -123,12 +123,31 @@ def main():
     # reset environment
     obs, _ = env.get_observations()
     timestep = 0
-    # simulate environment
+    # DIAGNOSTIC (temporary): cross-check whether the raw_omega
+    # climb/saturation pattern observed live in Gazebo (raw_omega ramping call
+    # to call, well past the deployment-side clamp, e.g. 6.2 -> 8.4 rad/s
+    # while the clamped cmd_vel sits pinned at ~2.52) also shows up in a
+    # repeated IsaacLab play.py evaluation, independent of Gazebo entirely.
+    # `actions` here is the actor's raw mean output straight from the policy,
+    # before DifferentialDriveAction.process_actions() applies its own
+    # scale/offset/clip inside env.step() - i.e. the IsaacLab-side equivalent
+    # of the ONNX runner's `raw_action` (same clip semantics: scale/offset
+    # default to identity, so process_actions reduces to a direct clamp).
+    # Logs only env index 0 (single-robot equivalent), every step.
+    diag_step = 0
     while simulation_app.is_running():
         # run everything in inference mode
         with torch.inference_mode():
             # agent stepping
             actions = policy(obs)
+            diag_step += 1
+            raw_omega = float(actions[0, 1])
+            raw_v = float(actions[0, 0])
+            print(
+                f'[DIAG play raw_action #{diag_step}] raw_v={raw_v:.6f} '
+                f'raw_omega={raw_omega:.6f}',
+                flush=True
+            )
             # env stepping
             obs, _, _, _ = env.step(actions)
         if args_cli.video:

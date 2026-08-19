@@ -17,8 +17,8 @@ import torch
 
 from rsl_rl.modules import ActorCriticSRU
 
-CHECKPOINT = "/media/user/data1/joshua/IsaacLab/logs/rsl_rl/scout_mini_navigation_ppo/2026-08-15_14-30-39/model_2999.pt"
-OUT_DIR = "/tmp/claude-1005/-home-joshua/16892984-d37d-4be3-b8b6-92046867b7ca/scratchpad/exported_policy"
+CHECKPOINT = "/media/user/data1/joshua/IsaacLab/logs/rsl_rl/scout_mini_navigation_ppo/2026-08-19_00-19-12_reward_fix_full/model_2999.pt"
+OUT_DIR = "/tmp/claude-1005/-home-joshua/16892984-d37d-4be3-b8b6-92046867b7ca/scratchpad/exported_policy_reward_fix"
 
 # Network architecture must match ScoutMiniNavPPORunnerCfg.policy exactly (agent_config/agents/rsl_rl_cfg.py)
 policy_kwargs = dict(

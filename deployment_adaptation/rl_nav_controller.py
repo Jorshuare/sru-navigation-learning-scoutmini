@@ -242,6 +242,35 @@ class LearningModel:
         # Combine state and depth embedding: [15] + [2560] = [2575]
         obs = np.concatenate([state_input, depth_embedding])[np.newaxis].astype(np.float32)
 
+        # DIAGNOSTIC (temporary, per explicit instruction): log a cheap
+        # fingerprint of the actual observation going INTO the policy each
+        # call - not just the resulting action. Checking whether the depth
+        # embedding and position/target values genuinely change between
+        # calls, or whether something upstream is feeding the policy a
+        # stale/frozen observation (which would fully explain a locked,
+        # unvarying output from a deterministic policy - identical input ->
+        # identical output, independent of any "the policy just likes to
+        # spin" explanation).
+        if not hasattr(self, '_diag_call_count'):
+            self._diag_call_count = 0
+        self._diag_call_count += 1
+        # NOTE: flush=True is required here. Under `ros2 launch`, stdout is not
+        # a TTY, so Python's print() is fully block-buffered by default and
+        # these lines were silently sitting in an unflushed buffer during the
+        # first attempt at this diagnostic (confirmed: the code was live and
+        # running - robot moved, logger.info() lines appeared fine since
+        # rclpy's logger flushes independently of Python's stdout buffering -
+        # but zero [DIAG] lines ever appeared after 40+ control cycles).
+        print(
+            f'[DIAG obs #{self._diag_call_count}] '
+            f'depth_sum={float(depth_embedding.sum()):.6f} '
+            f'depth_mean={float(depth_embedding.mean()):.6f} '
+            f'robot_pos_w={[round(v, 4) for v in robot_pos_w]} '
+            f'target_pos_log={[round(v, 4) for v in target_pos_log.tolist()]} '
+            f'last_action={[round(v, 4) for v in last_action]}',
+            flush=True
+        )
+
         # Run policy inference with LSTM states
         # Inputs: obs [1, 2575], h_in [1, 1, 512], c_in [1, 1, 512]
         # Outputs: actions [1, 2], h_out [1, 1, 512], c_out [1, 1, 512]
@@ -271,6 +300,16 @@ class LearningModel:
         cmd_vel[:, 1] = np.clip(cmd_vel[:, 1], -self._max_angular_velocity, self._max_angular_velocity)
         cmd_vel = cmd_vel.squeeze(0)
         raw_action = raw_action.squeeze(0)
+
+        # DIAGNOSTIC (temporary) - raw (pre-clamp) action, so we can tell
+        # "input frozen -> output frozen" apart from "input varies but raw
+        # output happens to consistently exceed the clamp regardless".
+        print(
+            f'[DIAG raw_action #{self._diag_call_count}] '
+            f'raw_v={float(raw_action[0]):.6f} raw_omega={float(raw_action[1]):.6f} '
+            f'h_state_sum={float(self._h_state.sum()):.6f}',
+            flush=True
+        )
 
         return cmd_vel, raw_action, target_vec_b
 
@@ -1074,9 +1113,14 @@ def main(args=None):
     navigation_policy_node = NavigationPolicyNode(
         preprocess_model_path=preprocess_model_path,
         policy_model_path=policy_model_path,
-        min_depth=0.25,
-        max_depth=10.0,
-        control_frequency=5.0,
+        # Was hardcoded 0.25/10.0 here, silently bypassing constants.py's own
+        # defaults (which were also wrong until this fix) - B2W/ZED-X's depth
+        # range, not Scout Mini's actual trained ZED2_CAMERA_CONFIG range
+        # (0.3-20.0m). Referencing the constants directly now instead of
+        # duplicating literals, so there's one source of truth going forward.
+        min_depth=constants.DEFAULT_MIN_DEPTH,
+        max_depth=constants.DEFAULT_MAX_DEPTH,
+        control_frequency=constants.DEFAULT_CONTROL_FREQUENCY,
         use_sim=use_sim
     )
 

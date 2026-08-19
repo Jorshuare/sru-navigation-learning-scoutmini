@@ -1,0 +1,149 @@
+from launch import LaunchDescription
+from launch.actions import DeclareLaunchArgument
+from launch.substitutions import LaunchConfiguration, PythonExpression, PathJoinSubstitution
+from launch.conditions import IfCondition
+from launch_ros.actions import Node
+from launch_ros.substitutions import FindPackageShare
+from launch.actions import IncludeLaunchDescription
+from launch.launch_description_sources import PythonLaunchDescriptionSource
+
+def generate_launch_description():
+    # ----------------------------------------------------------------------------
+    # 1. Declare a 'sim' argument (default = 'false' = no simulation)
+    # ----------------------------------------------------------------------------
+    sim_arg = DeclareLaunchArgument(
+        'sim',
+        default_value='false',
+        description='If "true", run in simulation mode. If "false", run on real hardware.'
+    )
+    sim = LaunchConfiguration('sim')  # will be either 'true' or 'false'
+
+    # ----------------------------------------------------------------------------
+    # 2. Declare a 'launch_zed' argument (default = 'false' = do not launch ZED)
+    # ----------------------------------------------------------------------------
+    launch_zed_arg = DeclareLaunchArgument(
+        'launch_zed',
+        default_value='false',
+        description='If "true", launch the ZED camera. If "false", do not launch ZED camera.'
+    )
+    launch_zed = LaunchConfiguration('launch_zed')  # will be either 'true' or 'false'
+
+    # ----------------------------------------------------------------------------
+    # 2. Package names
+    # ----------------------------------------------------------------------------
+    joy_package_name = 'joy'
+    rl_navigation_package_name = 'rl_nav_controller'
+
+    # ----------------------------------------------------------------------------
+    # 3. Joy node (always launched)
+    # ----------------------------------------------------------------------------
+    joy_node = Node(
+        package=joy_package_name,
+        executable='game_controller_node',
+        name='joy_rsl',
+        output='screen',
+        remappings=[
+            ('/joy', 'rsl_joy'),
+            ('/joy_vel', 'rsl_joy_vel'),
+        ],
+        parameters=[{
+            'autorepeat_rate': 50.0
+        }]
+    )
+
+    # ----------------------------------------------------------------------------
+    # 4. ZED camera launch (only if launch_zed=='true')
+    # ----------------------------------------------------------------------------
+    zed_launch_camera = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource([
+            PathJoinSubstitution([
+                FindPackageShare('zed_wrapper'),
+                'launch',
+                'zed_camera.launch.py'
+            ])
+        ]),
+        launch_arguments={
+            'camera_model': 'zedx'
+        }.items(),
+        condition=IfCondition(launch_zed)  # only include when launch_zed == 'true'
+    )
+
+    # ----------------------------------------------------------------------------
+    # 5. Static tf publisher (always launched to publish base_link → zed_camera_link)
+    # ----------------------------------------------------------------------------
+    static_tf_node = Node(
+        package="tf2_ros",
+        executable="static_transform_publisher",
+        output="screen",
+        arguments=[
+            "0.387", "0.0", "0.28",
+            "0", "0.349", "0",
+            "base_link", "zed_camera_link"
+        ],
+    )
+
+    # ----------------------------------------------------------------------------
+    # 6. RL‐navigation node (always launched, but use_sim_time follows 'sim')
+    # ----------------------------------------------------------------------------
+    # The node subscribes to the real-robot LIO odometry topic
+    # ('/dlio/odom_node/odom') by default. In sim there is no dlio node - so
+    # remap the subscription in sim mode. On real hardware (sim:=false) this
+    # remaps the topic to itself, i.e. a no-op.
+    #
+    # DIAGNOSTIC CHANGE (temporary, per explicit instruction): was
+    # '/odom' (Gazebo's wheel-integrated DiffDrive odometry) - now
+    # '/ground_truth_odom' (Gazebo's OdometryPublisher, immune to wheel slip).
+    # Root-cause investigation found /odom's HEADING estimate diverging from
+    # ground truth by up to 225 degrees during a real test (wheel-integrated
+    # odometry accumulates rotation error from the confirmed skid-steer scrub
+    # effect, then that wrong heading corrupts ALL subsequent position
+    # integration via cos/sin of the wrong heading - not just a magnitude
+    # error). Confirmed the ENTIRE rest of this SRU stack - training
+    # (asset.data.root_pos_w/root_quat_w, real IsaacLab/PhysX ground truth,
+    # read directly from observations.py/goal_commands.py) and B2W's own prior
+    # real deployment (DLIO real hardware / ground-truth model pose in Gazebo,
+    # confirmed via b2w_gz_bridge.yaml) - has NEVER used wheel-integrated
+    # dead-reckoning for orientation. This switch tests whether that mismatch
+    # is the actual root cause of the erratic navigation, separate from
+    # whatever the final real-hardware odometry source ends up being.
+    odom_topic_remap = PythonExpression([
+        "'/ground_truth_odom' if '", sim, "' == 'true' else '/dlio/odom_node/odom'"
+    ])
+
+    rl_navigation_node = Node(
+        package='rl_nav_controller',
+        executable='rl_nav_controller',  # or the actual executable name
+        name='rl_nav_controller',
+        output='screen',
+        parameters=[{
+            'use_sim_time': sim
+        }],
+        remappings=[
+            ('/dlio/odom_node/odom', odom_topic_remap),
+        ],
+        arguments=[
+            # This PythonExpression will expand to "--sim" if sim=="true", or "" otherwise.
+            PythonExpression([
+                "'",
+                sim,
+                "' == 'true' and '--sim' or ''"
+            ])
+        ]
+    )
+
+    # ----------------------------------------------------------------------------
+    # 7. Assemble LaunchDescription
+    # ----------------------------------------------------------------------------
+    return LaunchDescription([
+        # 1) declare arguments
+        sim_arg,
+        launch_zed_arg,
+
+        # 2) always-launch nodes
+        joy_node,
+        static_tf_node,
+        rl_navigation_node,
+
+        # 3) conditionally include ZED launch only when launch_zed == 'true'
+        zed_launch_camera,
+    ])

@@ -31,6 +31,16 @@ from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR, ISAACLAB_NUCLEUS_DIR
 from isaaclab.utils.noise import AdditiveUniformNoiseCfg as Unoise
 
 import navigation_template.mdp as mdp
+# Imported directly (not via the `mdp.*` wildcard namespace) because
+# `disable_backward_penalty_after_steps` is defined TWICE in this codebase -
+# once in curriculums.py (operates on the reward term's weight, matches this
+# fix's intent) and once in events.py (operates on an action-term attribute
+# that Scout Mini's DifferentialDriveAction doesn't have - a silent no-op).
+# `from .events import *` runs after `from .curriculums import *` in
+# mdp/__init__.py, so `mdp.disable_backward_penalty_after_steps` was
+# resolving to the broken one. Importing the module directly sidesteps the
+# collision instead of relying on import order.
+from navigation_template.mdp import curriculums as nav_curriculums
 from navigation_template.mdp.custom_noise import DeltaTransformationNoiseCfg
 from navigation_template.mdp.delay_manager import ObservationDelayManagerCfg
 from navigation_template.assets import ISAACLAB_NAV_TASKS_ASSETS_DIR
@@ -356,8 +366,36 @@ class RewardsCfg:
     )
 
     lateral_movement = RewTerm(func=mdp.lateral_movement, weight=-0.1)
-    rot_movement = RewTerm(func=mdp.rot_movement, weight=-1e-5)
+    # Was -1e-5 - confirmed via tensorboard (Episode_Reward/rot_movement flat
+    # at -0.000001 across all 3000 logged training iterations) that this was
+    # numerically inert throughout the actual training run, not just in
+    # theory. Raised 1000x to -0.01. Note: this term reads the robot's
+    # ACTUAL (already-clamped) angular velocity, so it can only shape
+    # behavior once the raw action is back within the clip range - it can't
+    # by itself pull back a raw action that's already saturating the clamp
+    # (gradient through a saturated clip is zero). See action_l2 below for
+    # the term that actually addresses that.
+    rot_movement = RewTerm(func=mdp.rot_movement, weight=-0.01)
     action_rate_l1 = RewTerm(func=mdp.action_rate_l1, weight=-0.1)
+    # NEW: penalizes the RAW pre-clip action magnitude directly
+    # (env.action_manager.action, same source action_rate_l1 already reads),
+    # not the post-clamp physical outcome - so it has real gradient even
+    # when the raw output is already saturating the deployment clip, unlike
+    # rot_movement above. Root-cause fix for the confirmed saturation: a
+    # live IsaacLab play.py diagnostic on the actual training checkpoint
+    # showed raw_omega exceeding the 2.523 rad/s clamp on 83% of steps
+    # (mean 5.49, max 14.03), with zero training-time pressure pushing back
+    # against it (this term was previously entirely absent from the reward
+    # config - only action_rate_l1, a step-to-step CHANGE penalty that a
+    # smooth/sustained high output barely triggers, existed). Uses IsaacLab's
+    # standard built-in mdp.action_l2 (isaaclab.envs.mdp.rewards.action_l2,
+    # sum(action_manager.action**2)) - already available via the existing
+    # `from isaaclab.envs.mdp import *` wildcard import, no new function
+    # needed. Weight -0.001 is a starting point (squared raw omega values up
+    # to ~196 at the observed max make this scale very differently from the
+    # L1 rate term) - intended to be validated/tuned via a short training
+    # run, not treated as final.
+    action_l2 = RewTerm(func=mdp.action_l2, weight=-0.001)
     episode_termination = RewTerm(func=mdp.is_terminated, weight=-50.0)
 
     # Goal rewards
@@ -372,8 +410,22 @@ class RewardsCfg:
         params={"command_name": "robot_goal", "sigmoid": 0.25, "T_r": 0.1, "probability": 0.01, "flat": True, "ratio": False},
     )
 
-    # Backward movement penalty (disabled by default, can be enabled via curriculum)
-    backward_movement_penalty = RewTerm(func=mdp.backward_movement_penalty, weight=-0.0)
+    # Backward movement penalty. Was weight=-0.0 (a hard no-op every step,
+    # confirmed via tensorboard - Episode_Reward/backward_movement_penalty
+    # was flat at exactly 0.000000 across all 3000 logged training
+    # iterations) despite the CurriculumCfg below appearing to manage it -
+    # that curriculum was silently broken (see the nav_curriculums import
+    # comment above). curriculums.py's own docstring states the actual
+    # intended design: penalty ON early ("helps with early training by
+    # preventing backward movement"), then relaxed later ("removes the
+    # constraint later to allow more natural movement patterns") - i.e.
+    # exactly the compromise needed given Scout Mini's skid-steer turning may
+    # genuinely require some reversing (scrub resistance, no free-castering
+    # wheels). Restored to a real starting weight, -0.1, matching
+    # lateral_movement's already-functioning scale (same [0,1] output
+    # range) - now actually enforced for the first `num_steps` of training
+    # (see CurriculumCfg fix below), not permanently off.
+    backward_movement_penalty = RewTerm(func=mdp.backward_movement_penalty, weight=-0.1)
 
 
 @configclass
@@ -399,9 +451,16 @@ class TerminationsCfg:
 class CurriculumCfg:
     """Curriculum terms for the MDP."""
 
+    # Fixed to call curriculums.py's implementation directly (via the
+    # nav_curriculums import above), not the broken mdp.* version - see the
+    # import comment and the backward_movement_penalty RewTerm comment above
+    # for the full story. Params updated to match curriculums.py's actual
+    # signature (term_name, num_steps) - the old params dict
+    # (disable_after_steps, action_term) matched the WRONG function's
+    # signature, which is how this was silently broken in the first place.
     disable_backward_penalty = CurrTerm(
-        func=mdp.disable_backward_penalty_after_steps,
-        params={"disable_after_steps": 500, "action_term": "velocity_command"},
+        func=nav_curriculums.disable_backward_penalty_after_steps,
+        params={"term_name": "backward_movement_penalty", "num_steps": 500},
     )
 
 ##

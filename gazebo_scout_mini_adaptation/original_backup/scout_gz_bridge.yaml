@@ -1,0 +1,38 @@
+# gz topic consumed by DiffDrive plugin. Only ONE ROS_TO_GZ entry may ever
+# target gz topic "cmd_vel" here - a second entry silently loses the
+# gz-transport advertisement race (e.g. a plain "cmd_vel" entry alongside
+# this one). For manual teleop, remap instead of adding a second entry:
+#   ros2 run teleop_twist_keyboard teleop_twist_keyboard \
+#     --ros-args -r cmd_vel:=/path_manager/path_manager_ros/nav_vel
+- ros_topic_name: "path_manager/path_manager_ros/nav_vel"
+  gz_topic_name: "cmd_vel"
+  ros_type_name: "geometry_msgs/msg/Twist"
+  gz_type_name: "gz.msgs.Twist"
+  direction: ROS_TO_GZ
+
+# Odometry bridge
+- ros_topic_name: "odom"
+  gz_topic_name: "odom"
+  ros_type_name: "nav_msgs/msg/Odometry"
+  gz_type_name: "gz.msgs.Odometry"
+  direction: GZ_TO_ROS
+  
+- ros_topic_name: "tf"
+  gz_topic_name: "tf"
+  ros_type_name: "tf2_msgs/msg/TFMessage"
+  gz_type_name: "gz.msgs.Pose_V"
+  direction: GZ_TO_ROS
+  
+  # Joint state bridge
+- ros_topic_name: "joint_states"
+  gz_topic_name: "joint_states"
+  ros_type_name: "sensor_msgs/msg/JointState"
+  gz_type_name: "gz.msgs.Model"
+  direction: GZ_TO_ROS
+  
+  # depth image 
+- ros_topic_name: "zed/zed_node/depth/depth_registered"
+  gz_topic_name: "zed_x_camera"
+  ros_type_name: "sensor_msgs/msg/Image"
+  gz_type_name: "gz.msgs.Image"
+  direction: GZ_TO_ROS

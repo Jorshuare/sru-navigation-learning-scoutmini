@@ -1,0 +1,113 @@
+Panels:
+  - Class: rviz_common/Displays
+    Name: Displays
+Visualization Manager:
+  Global Options:
+    # UPDATED 2026-08-19: was "odom". Live-tested - RViz's robot model was
+    # spinning in place while Gazebo's own view showed it correctly driving
+    # toward the goal, because odom->base_link TF (DiffDrive's own
+    # wheel-INTEGRATED estimate, previously the sole TF broadcaster) is the
+    # same known-unreliable source root-caused earlier this session (up to
+    # 225 degrees heading divergence from ground truth, measured directly).
+    # Fixed at the source in gazebo_real.xacro: moved the tf_topic broadcast
+    # from DiffDrive to the ground_truth_odom OdometryPublisher plugin
+    # instead (a frame can only have one TF parent at a time, so this is now
+    # the sole broadcaster) - ground_truth_odom is now a real, accurate TF
+    # root correctly connected to base_link, matching what rl_nav_controller
+    # already uses for actual navigation decisions. Also now correctly
+    # resolves the goal/moving-goal markers (published in this same frame -
+    # see rl_nav_controller.py's map_frame_id), which needed no separate fix.
+    Fixed Frame: ground_truth_odom
+    Background Color: 48; 48; 48
+  Displays:
+    - Class: rviz_default_plugins/TF
+      Name: TF
+      Enabled: true
+      Show Names: true
+      Show Axes: true
+      Marker Scale: 0.5
+
+    - Class: rviz_default_plugins/RobotModel
+      Name: RobotModel
+      Enabled: true
+      Description Topic:
+        Value: /robot_description
+
+    - Class: rviz_default_plugins/Odometry
+      Name: GroundTruthOdom
+      Enabled: true
+      Topic:
+        Value: /ground_truth_odom
+      Position Tolerance: 0.05
+      Angle Tolerance: 0.05
+      Keep: 200
+      Shape:
+        Value: Arrow
+      Color: 0; 255; 0
+
+    # "Topic" (not "Marker Topic") - confirmed directly against RViz2's own
+    # source (ros_topic_display.hpp, the real base class Marker inherits
+    # from) after an earlier "Marker Topic" theory - sourced from an
+    # unreliable web search summary, not verified against source first -
+    # turned out to be wrong and had to be reverted. Publisher side was
+    # separately confirmed fully healthy via a direct `ros2 topic echo`
+    # (valid frame_id/type/action/geometry) before concluding the bug was
+    # ever in this config at all, not the code.
+    - Class: rviz_default_plugins/Marker
+      Name: GoalVector
+      Enabled: true
+      Topic:
+        Value: /vis/goal_vector_marker
+
+    # DISABLED - was mistakenly treated as "the goal marker" earlier. Traced
+    # the actual code: this draws at self.moving_goal_delta, an
+    # incrementally-accumulated offset tied to smart-joystick mode, which
+    # we're not using - it stays at [0,0,0] (sits at the robot's own
+    # position) for a goal set via /goal_pose. Not useful for our setup.
+    # goal_vector_marker below (arrow from robot to the real target_pos_w,
+    # traced directly to the /goal_pose handler) is the correct existing
+    # one - but see /vis/manual_goal_marker below for the actually-requested
+    # fixed marker at the goal's exact world position.
+    - Class: rviz_default_plugins/Marker
+      Name: MovingGoal (unused - see comment)
+      Enabled: false
+      Topic:
+        Value: /vis/moving_goal_marker
+
+    - Class: rviz_default_plugins/Marker
+      Name: GoalPin (exact goal position, fixed, published manually)
+      Enabled: true
+      Topic:
+        Value: /vis/manual_goal_marker
+
+    - Class: rviz_default_plugins/Marker
+      Name: TwistCmd
+      Enabled: true
+      Topic:
+        Value: /vis/twist_cmd_marker
+
+    - Class: rviz_default_plugins/Marker
+      Name: RecordedWaypoints
+      Enabled: true
+      Topic:
+        Value: /vis/recorded_waypoints_marker
+Views:
+  # Added - original config omitted this entirely, leaving RViz to fall back
+  # to some default camera state (likely the reported "can't pan" issue -
+  # not a real inability to pan, just starting zoomed in/oddly positioned
+  # with no explicit view set). Distance/focal point sized for the 30x30m
+  # terrain tiles this project uses (SCOUT_MINI_MAZE_TERRAIN_CFG), not the
+  # robot's own ~0.5m scale - start zoomed out enough to see a full goal run.
+  # Standard RViz Orbit controls (long-standing, unchanged since ROS1):
+  # left-drag = rotate, middle-drag = pan, scroll = zoom. If no middle
+  # button (trackpad/VNC), Shift+left-drag pans instead.
+  Current:
+    Class: rviz_default_plugins/Orbit
+    Distance: 25.0
+    Focal Point:
+      X: 0.0
+      Y: 0.0
+      Z: 0.0
+    Yaw: 0.785
+    Pitch: 0.785
+    Near Clip Distance: 0.01

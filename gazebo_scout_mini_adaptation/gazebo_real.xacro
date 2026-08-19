@@ -1,0 +1,224 @@
+<?xml version="1.0"?>
+<!--
+Gazebo plugins + camera sensor for Scout Mini, corrected to real hardware values.
+Structure copied from scout_ros2's gazebo.xacro (same DiffDrive/sensor plugin
+wiring Part A already debugged - topic names, plugin types, etc. all unchanged).
+
+Two real, confirmed corrections made here, found by comparing this file against
+what the SRU policy was actually trained on:
+
+1. DiffDrive wheel_separation/wheel_radius were Scout 2.0's (0.58306m / 0.16459m,
+   from scout_v2.xacro) - now Scout Mini's real, confirmed values (0.49m / 0.08m,
+   PLAN.md sec 6). Note: a wheel-size mismatch alone would NOT cause wrong-direction
+   driving (DiffDrive still correctly converts a commanded (v, omega) into whatever
+   wheel speeds achieve that motion, using its own configured wheel size) - but it
+   does mean the robot's real-world footprint/turning behavior didn't match what was
+   trained on, which matters for a fair test.
+
+2. Camera mount was still B2W's: origin rpy="0 0.349066 0" (20 degrees pitched
+   down, inherited from B2W's original static tf) and horizontal_fov=1.845264
+   (~105.7 degrees, matches ZED-X, not ZED 2). Confirmed both were never updated
+   for Scout Mini. Now: level (no tilt, per your explicit confirmation - "not tilt
+   at any degree, it is facing the front") and ZED 2's real 110-degree horizontal
+   FOV (110 * pi/180 = 1.9198621771937625 rad). Mount position (0.06m forward,
+   0.257m up) matches the same real measurement already used in
+   scout_mini.urdf (the IsaacLab training asset) - see that file's header for the
+   derivation from the confirmed 19.2cm-above-chassis-top / 6cm-forward
+   measurement.
+
+Image resolution (240x150) and clip range (0.3-20.0m) are left unchanged - clip
+range already matches ZED 2's real spec, and resolution is a simulation-efficiency
+choice (raycasting resolution, not required to match the real sensor's native
+pixel count) rather than something confirmed wrong.
+-->
+<robot xmlns:xacro="http://ros.org/wiki/xacro">
+
+    <gazebo>
+        <plugin filename="gz-sim-sensors-system" name="gz::sim::systems::Sensors">
+            <render_engine>ogre2</render_engine>
+        </plugin>
+        <plugin filename="gz-sim-diff-drive-system" name="gz::sim::systems::DiffDrive">
+            <left_joint>front_left_wheel</left_joint>
+            <left_joint>rear_left_wheel</left_joint>
+            <right_joint>front_right_wheel</right_joint>
+            <right_joint>rear_right_wheel</right_joint>
+            <!-- wheel_separation set to 0.576 (0.49 x ~1.176), not the real 0.49m -
+                 revised down from an earlier 0.686 (0.49 x 1.4). The 1.4 figure
+                 came from AgileX's OLD Scout 2.0 ROS1/Gazebo-Classic controller
+                 (agilexrobotics/ugv_gazebo_sim, scout_skid_steer.cpp) - a
+                 different robot generation, different plugin architecture. Found
+                 a more directly comparable, real source since: a community ROS2
+                 Jazzy + Gazebo Harmonic port SPECIFICALLY for Scout Mini
+                 (mattiadutto/ugv_gazebo_sim, scout/scout_description/urdf/
+                 scout_mini.xacro - fetched and read directly), using the SAME
+                 gz-sim DiffDrive plugin we use. Its own wheel_separation (0.49)
+                 vs its own physical wheel origins (y=+/-0.2082515, i.e. physical
+                 track=0.4165) implies a ratio of ~1.176, not 1.4. Applied to our
+                 confirmed-correct physical track (0.49m): 0.49*1.176=0.576.
+                 Still flagged as a starting point (from a different but far more
+                 comparable source), not a confirmed Scout-Mini-specific fact.
+                 DiffDrive computes wheel_speed = (v +/- omega*half_separation)/radius;
+                 raising this only boosts the omega (rotation) term's sensitivity -
+                 v-only (straight-line) commands are entirely unaffected, since
+                 wheel_separation doesn't appear in that part of the formula.
+                 Real caveat, not glossed over: since this same wheel_separation
+                 value also feeds DiffDrive's own odometry computation below,
+                 inflating it will also distort wheel-based /odom's own internal
+                 assumption about the actuation-to-rotation relationship, on top
+                 of the wheel-slip drift it already has. Given /odom is already
+                 known-unreliable and ground_truth_odom exists for comparison,
+                 this is an acceptable secondary imperfection, not ignored. -->
+            <wheel_separation>0.576</wheel_separation>
+            <wheel_radius>0.08</wheel_radius>
+            <topic>cmd_vel</topic>
+            <!-- tf_topic REMOVED here (was <tf_topic>tf</tf_topic>) - moved to
+                 the ground_truth_odom OdometryPublisher plugin below instead.
+                 Found 2026-08-19: RViz (loaded via scout_mini_nav.rviz for
+                 live goal/trajectory visualization, since Gazebo's own GUI
+                 can't render ROS visualization_msgs/Marker) was showing the
+                 robot spinning in place while Gazebo's own view showed it
+                 correctly driving toward the goal - because RViz's
+                 RobotModel/TF display follows the odom->base_link TF this
+                 plugin broadcasts, and that TF is DiffDrive's own
+                 wheel-INTEGRATED estimate - the exact same known-unreliable
+                 source already root-caused earlier (up to 225 degrees of
+                 heading divergence from ground truth measured directly,
+                 which is why rl_nav_controller's actual navigation decisions
+                 were already switched to consume ground_truth_odom instead,
+                 see rl_nav_controller.launch.py). This plugin was still the
+                 sole TF broadcaster though, so any TF-based visualization
+                 (RViz) was unknowingly watching the same corrupted estimate.
+                 A frame can only have ONE parent in TF2's tree at a time, so
+                 ground_truth_odom->base_link and odom->base_link can't both
+                 broadcast simultaneously (base_link would get two competing
+                 parents) - picked ground_truth_odom as the sole TF source
+                 since it's what should drive any visualization meant to
+                 reflect real robot behavior. /odom (this plugin's own
+                 Odometry MESSAGE, not TF) is UNCHANGED and still publishes
+                 for wheel-vs-ground-truth comparison purposes - only the TF
+                 broadcast moved. If a future need arises to visualize wheel
+                 odometry's OWN (wrong) trajectory in RViz, that needs a
+                 separate ghost frame, not this plugin's TF back. -->
+            <!-- Odometry publishing restored (odom_publish_frequency/odom_topic/
+                 frame_id/child_frame_id) - real hardware deployment uses wheel
+                 odometry (+ camera), not ground truth, so /odom needs to reflect
+                 that same real error characteristic (dead-reckoning drift under
+                 wheel slip) to be representative. Confirmed real: this odometry
+                 IS wheel-integrated, not chassis-position-based - it will drift
+                 from ground truth exactly the way real wheel odometry would
+                 (measured once at 10+ meters off during a genuine stuck/wheel-
+                 slip event). OdometryPublisher below now publishes ground truth
+                 to a SEPARATE topic for ongoing side-by-side comparison, not as
+                 the primary /odom source.
+                 max_linear_acceleration/max_angular_acceleration re-added.
+                 Ruled out as the cause of the under-rotation anomaly: removing
+                 them (retested with an identical 6s pure-rotation ground-truth
+                 test) made actual rotation SMALLER (~90 deg vs ~180 deg with the
+                 limits present), the opposite of what "limits are throttling it"
+                 would predict - so keeping them (real, sourced, generally-good
+                 practice; see the earlier note on where these values come from).
+                 Values revised DOWN from 3.0/6.0 (Husky, a different/heavier
+                 robot) to 1.0/1.0, matching mattiadutto/ugv_gazebo_sim's real
+                 Scout Mini Harmonic port exactly (fetched and read directly, see
+                 wheel_separation comment above for the same source). Also added
+                 max_wheel_torque=20 - a real parameter that source uses and we
+                 were missing entirely; a hard torque ceiling independent of the
+                 acceleration limit. Motivated by a real incident, not just
+                 caution: a live test under the old (3.0/6.0, no torque cap)
+                 config showed angular_z pinned at max clamp continuously with
+                 no arrival ever detected, and the robot drove off the terrain
+                 edge - exactly the failure mode tighter limits are meant to
+                 prevent. Current leading hypothesis for the underlying
+                 under-rotation-during-pivot phenomenon itself (separate from
+                 this safety config): Scout Mini is 4-wheel skid-steer (no free-
+                 castering wheels) - in-place pivoting requires all four wheels
+                 to scrub sideways against friction, a real physical effect real
+                 skid-steer vehicles also under-achieve the naive kinematic
+                 turn-rate formula for. Run-to-run inconsistency in earlier
+                 ad hoc trials was later found to be contaminated by a test-
+                 methodology bug (no final zero-velocity command sent, and
+                 DiffDrive has no cmd_vel watchdog, so the robot kept coasting
+                 between trials) - not necessarily physics non-determinism. -->
+            <odom_publish_frequency>50</odom_publish_frequency>
+            <odom_topic>odom</odom_topic>
+            <frame_id>odom</frame_id>
+            <child_frame_id>base_link</child_frame_id>
+            <max_linear_acceleration>1.0</max_linear_acceleration>
+            <min_linear_acceleration>-1.0</min_linear_acceleration>
+            <max_angular_acceleration>1.0</max_angular_acceleration>
+            <min_angular_acceleration>-1.0</min_angular_acceleration>
+            <max_wheel_torque>20</max_wheel_torque>
+        </plugin>
+        <plugin filename="gz-sim-odometry-publisher-system" name="gz::sim::systems::OdometryPublisher">
+            <odom_frame>ground_truth_odom</odom_frame>
+            <robot_base_frame>base_link</robot_base_frame>
+            <odom_publish_frequency>50</odom_publish_frequency>
+            <odom_topic>ground_truth_odom</odom_topic>
+            <dimensions>2</dimensions>
+            <!-- Added - this plugin is now the sole TF broadcaster
+                 (ground_truth_odom -> base_link), moved from DiffDrive above.
+                 Same gz topic name "tf" as before, so scout_gz_bridge.yaml's
+                 existing gz "tf" -> ROS "/tf" bridge entry needs no change -
+                 only WHICH plugin feeds it changed, not the bridge itself. -->
+            <tf_topic>tf</tf_topic>
+        </plugin>
+        <plugin filename="gz-sim-joint-state-publisher-system" name="gz::sim::systems::JointStatePublisher">
+            <topic>joint_states</topic>
+        </plugin>
+    </gazebo>
+
+    <link name="zed_x_camera">
+        <collision>
+            <origin xyz="0 0 0" rpy="0 0 0"/>
+            <geometry><box size="0.05 0.1 0.01"/></geometry>
+        </collision>
+        <inertial>
+            <origin xyz="0 0 0" rpy="0 0 0"/>
+            <mass value="0.01"/>
+            <inertia ixx="0.01" ixy="0" ixz="0" iyy="0.01" iyz="0" izz="0.01"/>
+        </inertial>
+    </link>
+
+    <joint name="base_to_zed_x_camera" type="fixed">
+        <parent link="base_link"/>
+        <child link="zed_x_camera"/>
+        <origin xyz="0.06 0.0 0.257" rpy="0 0 0"/>
+    </joint>
+
+    <gazebo reference="base_to_zed_x_camera">
+        <preserveFixedJoint>true</preserveFixedJoint>
+    </gazebo>
+
+    <gazebo reference="zed_x_camera">
+        <sensor name="zed_x_camera" type="depth_camera">
+            <always_on>1</always_on>
+            <update_rate>15</update_rate>
+            <visualize>true</visualize>
+            <topic>zed_x_camera</topic>
+            <camera>
+                <!-- Was 1.9198621771937625 rad (110 deg, real ZED 2 datasheet spec) -
+                     wrong target for a SIMULATION test. Training's raycast_camera
+                     (scout_mini_env_cfg.py) used a pinhole intrinsic matrix with a
+                     single focal length (fx=fy=26.5px at 64x40, i.e. NOT matched to
+                     the real camera's published FOV) - which works out to an
+                     ACTUAL rendered FOV of 100.742 deg (H) x 74.085 deg (V), not
+                     110x83.5. Gazebo only exposes horizontal_fov (vertical is
+                     auto-derived from this plus the image aspect ratio) - since
+                     240x150 and 64x40 share the same 1.6:1 aspect ratio, this one
+                     value reproduces training's exact projection geometry. Matching
+                     the real ZED 2 spec (110/70) matters for eventual real-hardware
+                     deployment, not for testing a sim-trained policy in sim. -->
+                <horizontal_fov>1.7582794098833934</horizontal_fov>
+                <image>
+                    <width>240</width>
+                    <height>150</height>
+                    <format>R_FLOAT32</format>
+                </image>
+                <clip><near>0.3</near><far>20.0</far></clip>
+                <optical_frame_id>zed_x_camera</optical_frame_id>
+                <depth_camera><output>depths</output></depth_camera>
+            </camera>
+        </sensor>
+    </gazebo>
+
+</robot>
